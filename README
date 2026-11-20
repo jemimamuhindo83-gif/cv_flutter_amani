@@ -1,0 +1,20 @@
+# CV Flutter Amani
+
+Application mobile développée avec **Flutter** présentant mon profil / CV, ma famille et mes coordonnées de contact.
+
+## Captures d'écran de finalisation
+
+### Connexion
+![Connexion](captures/Image.Page1.jpg)
+
+### Accueil / CV
+![Accueil CV](captures/Image.Page2.jpg)
+![Formation et Expériences](captures/Image.page2(suite)%20(2).jpg)
+![Compétences et Centres d'intérêt](captures/Image.page2(suite).jpg)
+
+### Ma Famille
+![Ma Famille](captures/Image.page3.jpg)
+
+### Contact
+![Contact](captures/Image.page4.jpg)
+![Contact suite](captures/Image.page4(suite).jpg)
