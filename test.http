@@ -1,0 +1,7 @@
+POST http://localhost/api-test/public/accounts/register
+Content-Type: application/json
+
+{
+    "email": "amani@test.com",
+    "password": "Password123!"
+}

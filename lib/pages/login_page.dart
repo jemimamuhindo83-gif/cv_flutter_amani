@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 class LoginPage extends StatefulWidget {
   final VoidCallback onLoginSuccess;
@@ -14,6 +16,7 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _motDePasseController = TextEditingController();
   bool _masquerMotDePasse = true;
   String? _messageErreur;
+  bool _chargement = false;
 
   @override
   void dispose() {
@@ -22,21 +25,55 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  void _soumettre() {
+  Future<void> _soumettre() async {
     final id = _identifiantController.text.trim();
     final mdp = _motDePasseController.text.trim();
 
     if (id.isEmpty || mdp.isEmpty) {
       setState(() {
-        _messageErreur = 'Veuillez saisir votre identifiant et votre mot de passe.';
+        _messageErreur = 'Veuillez saisir votre identifiant (email) et votre mot de passe.';
       });
       return;
     }
 
     setState(() {
       _messageErreur = null;
+      _chargement = true;
     });
-    widget.onLoginSuccess();
+
+    try {
+      final uri = Uri.parse('http://localhost/api-test/public/accounts/login');
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': id,
+          'password': mdp,
+        }),
+      );
+
+      final Map<String, dynamic> body = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200 && body['success'] == true) {
+        setState(() {
+          _chargement = false;
+        });
+        widget.onLoginSuccess();
+      } else {
+        setState(() {
+          _chargement = false;
+          _messageErreur = body['message']?.toString() ?? 'Email ou mot de passe incorrect.';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _chargement = false;
+        _messageErreur = 'Impossible de contacter le serveur API (vérifiez XAMPP / Apache).';
+      });
+    }
   }
 
   @override
@@ -74,8 +111,8 @@ class _LoginPageState extends State<LoginPage> {
                     children: [
                       Container(
                         padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
                             colors: [Color(0xFF4F46E5), Color(0xFF06B6D4)],
                           ),
                           shape: BoxShape.circle,
@@ -105,7 +142,7 @@ class _LoginPageState extends State<LoginPage> {
                       TextField(
                         controller: _identifiantController,
                         decoration: InputDecoration(
-                          labelText: 'Identifiant',
+                          labelText: 'Identifiant (Email)',
                           prefixIcon: const Icon(Icons.person_outline, color: Color(0xFF4F46E5)),
                           filled: true,
                           fillColor: const Color(0xFFF8FAFC),
@@ -118,7 +155,7 @@ class _LoginPageState extends State<LoginPage> {
                       TextField(
                         controller: _motDePasseController,
                         obscureText: _masquerMotDePasse,
-                        onSubmitted: (_) => _soumettre(),
+                        onSubmitted: (_) => _chargement ? null : _soumettre(),
                         decoration: InputDecoration(
                           labelText: 'Mot de passe',
                           prefixIcon: const Icon(Icons.key_outlined, color: Color(0xFF4F46E5)),
@@ -175,11 +212,20 @@ class _LoginPageState extends State<LoginPage> {
                                 borderRadius: BorderRadius.circular(14),
                               ),
                             ),
-                            onPressed: _soumettre,
-                            icon: const Icon(Icons.login_rounded),
-                            label: const Text(
-                              'Se connecter',
-                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            onPressed: _chargement ? null : _soumettre,
+                            icon: _chargement
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.login_rounded),
+                            label: Text(
+                              _chargement ? 'Connexion...' : 'Se connecter',
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                             ),
                           ),
                         ),

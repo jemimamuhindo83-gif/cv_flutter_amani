@@ -1,79 +1,349 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
-class MembreFamille {
-  final String nom;
-  final String lienParente;
-  final String imagePath;
-  final String roleOuInfo;
-  final Color couleur;
-
-  const MembreFamille({
-    required this.nom,
-    required this.lienParente,
-    required this.imagePath,
-    required this.roleOuInfo,
-    required this.couleur,
-  });
-}
-
-class FamillePage extends StatelessWidget {
+class FamillePage extends StatefulWidget {
   const FamillePage({super.key});
 
-  final List<MembreFamille> _membres = const [
-    MembreFamille(
-      nom: 'Joseph Muhindo',
-      lienParente: 'Père',
-      imagePath: 'assets/images/papa.jpg.jpeg',
-      roleOuInfo: 'Soutien et repère familial',
-      couleur: Color(0xFF4F46E5),
-    ),
-    MembreFamille(
-      nom: 'Furaha Muhindo',
-      lienParente: 'Mère',
-      imagePath: 'assets/images/maman.jpg.jpeg',
-      roleOuInfo: 'Pilier et encouragement au quotidien',
-      couleur: Color(0xFFDB2777),
-    ),
-    MembreFamille(
-      nom: 'Jospin Muhindo',
-      lienParente: 'Frère',
-      imagePath: 'assets/images/frere.jpg.jpeg',
-      roleOuInfo: 'Partage et entraide',
-      couleur: Color(0xFF0284C7),
-    ),
-    MembreFamille(
-      nom: 'Joviale Muhindo',
-      lienParente: 'Sœur',
-      imagePath: 'assets/images/soeur.jpg.jpeg',
-      roleOuInfo: 'Complicité et soutien',
-      couleur: Color(0xFF0D9488),
-    ),
-  ];
+  @override
+  State<FamillePage> createState() => _FamillePageState();
+}
 
-  Widget _buildAvatar(MembreFamille membre) {
-    return Container(
-      width: 76,
-      height: 76,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: membre.couleur, width: 2.5),
+class _FamillePageState extends State<FamillePage> {
+  static const String _baseUrl = 'http://localhost/api-test/public/famille-membres';
+
+  List<dynamic> _membres = [];
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _chargerMembres();
+  }
+
+  List<dynamic> _extraireListe(dynamic decoded) {
+  if (decoded is List) {
+    return decoded;
+  }
+  if (decoded is Map) {
+    final data = decoded['data'];
+    if (data is List) {
+      return data;
+    }
+    final membres = decoded['membres'];
+    if (membres is List) {
+      return membres;
+    }
+  }
+  return [];
+}
+   
+
+  Future<void> _chargerMembres() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final response = await http.get(
+        Uri.parse(_baseUrl),
+        headers: {'Accept': 'application/json'},
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final decoded = jsonDecode(response.body);
+        final liste = _extraireListe(decoded);
+        setState(() {
+          _membres = liste
+              .whereType()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList();
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _errorMessage = 'Erreur chargement (${response.statusCode})';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Impossible de joindre l\'API : $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _enregistrerMembre({
+    Map<String, dynamic>? existant,
+    required String nom,
+    required String postnom,
+    required String prenom,
+    required String lieuNaissance,
+    required String dateNaissance,
+    required String parente,
+    String? image,
+  }) async {
+    final Map<String, dynamic> payload = {
+      'nom': nom.trim(),
+      'postnom': postnom.trim(),
+      'prenom': prenom.trim(),
+      'lieu_naissance': lieuNaissance.trim(),
+      'date_naissance': dateNaissance.trim(),
+      'parente': parente.trim(),
+      'image': (image == null || image.trim().isEmpty) ? null : image.trim(),
+    };
+
+    final bool estModification = existant != null && existant['id'] != null;
+    final Uri uri = estModification
+        ? Uri.parse('$_baseUrl/${existant['id']}')
+        : Uri.parse(_baseUrl);
+
+    final http.Response response = estModification
+        ? await http.put(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(payload),
+          )
+        : await http.post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(payload),
+          );
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      await _chargerMembres();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            estModification
+                ? 'Membre modifié avec succès'
+                : 'Membre ajouté avec succès',
+          ),
+        ),
+      );
+    } else {
+      String msg = 'Échec de l\'opération (${response.statusCode})';
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['message'] != null) {
+          msg = decoded['message'].toString();
+        }
+      } catch (_) {}
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg)),
+      );
+    }
+  }
+
+  Future<void> _supprimerMembre(Map<String, dynamic> membre) async {
+    final id = membre['id'];
+    if (id == null) return;
+
+    final bool? confirme = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirmer la suppression'),
+        content: Text(
+          'Supprimer ${membre['prenom'] ?? ''} ${membre['nom'] ?? ''} ?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Supprimer'),
+          ),
+        ],
       ),
-      child: ClipOval(
-        child: Image.asset(
-          membre.imagePath,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return Container(
-              color: membre.couleur.withValues(alpha: 0.12),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.broken_image_rounded,
-                color: membre.couleur,
-                size: 30,
+    );
+
+    if (confirme != true) return;
+
+    try {
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/$id'),
+        headers: {'Accept': 'application/json'},
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        await _chargerMembres();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Membre supprimé')),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur suppression (${response.statusCode})')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur réseau : $e')),
+      );
+    }
+  }
+
+  Widget _construireAvatar(Map<String, dynamic> membre) {
+    final String img = (membre['image'] ?? '').toString().trim();
+    final String initiale = (membre['prenom']?.toString().isNotEmpty == true
+            ? membre['prenom'].toString()[0]
+            : (membre['nom']?.toString().isNotEmpty == true
+                ? membre['nom'].toString()[0]
+                : '?'))
+        .toUpperCase();
+
+    if (img.startsWith('assets/')) {
+      return CircleAvatar(
+        backgroundImage: AssetImage(img),
+        onBackgroundImageError: (_, __) {},
+        child: null,
+      );
+    }
+
+    if (img.startsWith('http://') || img.startsWith('https://')) {
+      return CircleAvatar(
+        backgroundImage: NetworkImage(img),
+        onBackgroundImageError: (_, __) {},
+        child: null,
+      );
+    }
+
+    return CircleAvatar(child: Text(initiale));
+  }
+
+  void _ouvrirFormulaireMembre({Map<String, dynamic>? existant}) {
+    final formKey = GlobalKey<FormState>();
+    final nomCtrl =
+        TextEditingController(text: existant?['nom']?.toString() ?? '');
+    final postnomCtrl =
+        TextEditingController(text: existant?['postnom']?.toString() ?? '');
+    final prenomCtrl =
+        TextEditingController(text: existant?['prenom']?.toString() ?? '');
+    final lieuCtrl = TextEditingController(
+      text: existant?['lieu_naissance']?.toString() ?? '',
+    );
+    final dateCtrl = TextEditingController(
+      text: existant?['date_naissance']?.toString() ?? '1995-01-01',
+    );
+    final parenteCtrl = TextEditingController(
+      text: existant?['parente']?.toString() ?? '',
+    );
+    final imageCtrl =
+        TextEditingController(text: existant?['image']?.toString() ?? '');
+
+    bool saving = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text(
+            existant == null ? 'Ajouter un membre' : 'Modifier le membre',
+          ),
+          content: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: nomCtrl,
+                    decoration: const InputDecoration(labelText: 'Nom *'),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Champ requis' : null,
+                  ),
+                  TextFormField(
+                    controller: postnomCtrl,
+                    decoration: const InputDecoration(labelText: 'Postnom *'),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Champ requis' : null,
+                  ),
+                  TextFormField(
+                    controller: prenomCtrl,
+                    decoration: const InputDecoration(labelText: 'Prénom *'),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Champ requis' : null,
+                  ),
+                  TextFormField(
+                    controller: parenteCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Parenté (ex. Père, Mère, Frère, Sœur) *',
+                    ),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Champ requis' : null,
+                  ),
+                  TextFormField(
+                    controller: lieuCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Lieu de naissance *'),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Champ requis' : null,
+                  ),
+                  TextFormField(
+                    controller: dateCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Date de naissance (YYYY-MM-DD) *',
+                    ),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'Champ requis';
+                      final regex = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+                      if (!regex.hasMatch(v.trim())) {
+                        return 'Format attendu : AAAA-MM-JJ';
+                      }
+                      return null;
+                    },
+                  ),
+                  TextFormField(
+                    controller: imageCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Image (ex. assets/images/papa.jpg.jpeg)',
+                    ),
+                  ),
+                ],
               ),
-            );
-          },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving ? null : () => Navigator.pop(ctx),
+              child: const Text('Annuler'),
+            ),
+            ElevatedButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      if (!formKey.currentState!.validate()) return;
+                      setDialogState(() => saving = true);
+                      await _enregistrerMembre(
+                        existant: existant,
+                        nom: nomCtrl.text,
+                        postnom: postnomCtrl.text,
+                        prenom: prenomCtrl.text,
+                        lieuNaissance: lieuCtrl.text,
+                        dateNaissance: dateCtrl.text,
+                        parente: parenteCtrl.text,
+                        image: imageCtrl.text,
+                      );
+                      if (ctx.mounted) Navigator.pop(ctx);
+                    },
+              child: Text(saving ? 'Enregistrement...' : 'Enregistrer'),
+            ),
+          ],
         ),
       ),
     );
@@ -81,81 +351,87 @@ class FamillePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Color(0xFFFDF2F8),
-            Color(0xFFF8FAFC),
-          ],
-        ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Ma Famille'),
+        actions: [
+          IconButton(
+            onPressed: _chargerMembres,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Actualiser',
+          ),
+        ],
       ),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _membres.length,
-        itemBuilder: (context, index) {
-          final membre = _membres[index];
-          return Card(
-            elevation: 4,
-            shadowColor: membre.couleur.withValues(alpha: 0.22),
-            margin: const EdgeInsets.only(bottom: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-              side: BorderSide(color: membre.couleur.withValues(alpha: 0.25)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                children: [
-                  _buildAvatar(membre),
-                  const SizedBox(width: 16),
-                  Expanded(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _ouvrirFormulaireMembre(),
+        icon: const Icon(Icons.add),
+        label: const Text('Ajouter'),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _errorMessage != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          membre.nom,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F172A),
-                          ),
+                          _errorMessage!,
+                          textAlign: TextAlign.center,
                         ),
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: membre.couleur.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            'Lien de parenté : ${membre.lienParente}',
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              color: membre.couleur,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          membre.roleOuInfo,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF475569),
-                          ),
+                        const SizedBox(height: 12),
+                        ElevatedButton(
+                          onPressed: _chargerMembres,
+                          child: const Text('Réessayer'),
                         ),
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
+                )
+              : _membres.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Aucun membre enregistré. Cliquez sur "Ajouter".',
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _membres.length,
+                      itemBuilder: (context, index) {
+                        final m = _membres[index];
+                        final titre =
+                            '${m['prenom'] ?? ''} ${m['nom'] ?? ''} ${m['postnom'] ?? ''}'
+                                .trim();
+                        final sousTitre =
+                            '${m['parente'] ?? ''} • Né(e) à ${m['lieu_naissance'] ?? ''} (${m['date_naissance'] ?? ''})';
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: ListTile(
+                            leading: _construireAvatar(m),
+                            title: Text(titre.isEmpty ? 'Membre' : titre),
+                            subtitle: Text(sousTitre),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit),
+                                  tooltip: 'Modifier',
+                                  onPressed: () =>
+                                      _ouvrirFormulaireMembre(existant: m),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete),
+                                  tooltip: 'Supprimer',
+                                  onPressed: () => _supprimerMembre(m),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
     );
   }
 }
